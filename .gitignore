@@ -1,0 +1,248 @@
+# =============================================================================
+# MASTER PYTHON .gitignore
+# For: General Python + AI/LLM/GenAI Engineering Projects
+# Usage: Copy this file to your project root and rename it to .gitignore
+# =============================================================================
+
+
+# =============================================================================
+# PYTHON BYTECODE & CACHE
+# =============================================================================
+__pycache__/
+*.py[cod]
+*$py.class
+*.pyo
+*.pyd
+.Python
+
+
+# =============================================================================
+# VIRTUAL ENVIRONMENTS
+# =============================================================================
+venv/
+.venv/
+env/
+.env_venv/
+ENV/
+env.bak/
+venv.bak/
+# Conda
+.conda/
+*.conda
+
+
+# =============================================================================
+# ENVIRONMENT VARIABLES & SECRETS  ← CRITICAL: Never commit API keys
+# =============================================================================
+.env
+.env.*
+!.env.example
+secrets.py
+secrets.json
+config/secrets.*
+*.key
+*.pem
+*.p12
+*.pfx
+
+
+# =============================================================================
+# PACKAGE & DISTRIBUTION
+# =============================================================================
+dist/
+build/
+*.egg-info/
+*.egg
+MANIFEST
+.eggs/
+wheels/
+pip-wheel-metadata/
+share/python-wheels/
+*.whl
+
+
+# =============================================================================
+# TESTING & COVERAGE
+# =============================================================================
+.pytest_cache/
+.tox/
+.nox/
+.coverage
+.coverage.*
+htmlcov/
+coverage.xml
+*.cover
+*.py,cover
+.hypothesis/
+nosetests.xml
+test-results/
+test-reports/
+
+
+# =============================================================================
+# TYPE CHECKING & LINTING
+# =============================================================================
+.mypy_cache/
+.dmypy.json
+dmypy.json
+.pytype/
+.pyre/
+.ruff_cache/
+
+
+# =============================================================================
+# JUPYTER NOTEBOOKS
+# =============================================================================
+.ipynb_checkpoints/
+*/.ipynb_checkpoints/*
+# Uncomment if you want to ignore all notebooks (not recommended for learning):
+# *.ipynb
+
+
+# =============================================================================
+# AI / LLM / GENAI SPECIFIC
+# =============================================================================
+# Vector stores & embeddings
+chroma_db/
+chromadb/
+vector_store/
+vectorstore/
+faiss_index/
+*.faiss
+*.index
+pinecone_index/
+
+# Model weights & checkpoints (these are large — never commit)
+*.bin
+*.pt
+*.pth
+*.ckpt
+*.safetensors
+*.gguf
+*.ggml
+models/
+checkpoints/
+weights/
+
+# LangChain / LlamaIndex cache
+.langchain/
+llm_cache/
+.llama_index/
+
+# Datasets & raw data (often too large or sensitive)
+data/raw/
+data/interim/
+data/processed/
+*.csv
+*.tsv
+*.parquet
+*.jsonl
+# Uncomment these if your CSVs/JSONLs are sensitive or large:
+# *.json  ← don't blanket-ignore .json; it will catch config files too
+
+# MLflow / experiment tracking
+mlruns/
+mlartifacts/
+.mlflow/
+
+
+# =============================================================================
+# DATABASES & STORAGE
+# =============================================================================
+*.db
+*.sqlite
+*.sqlite3
+*.db-journal
+
+
+# =============================================================================
+# LOGS & OUTPUTS
+# =============================================================================
+*.log
+logs/
+log/
+*.out
+outputs/
+results/
+
+
+# =============================================================================
+# IDEs & EDITORS
+# =============================================================================
+# VS Code
+.vscode/
+!.vscode/extensions.json
+!.vscode/settings.json
+
+# PyCharm / JetBrains
+.idea/
+*.iml
+*.iws
+*.ipr
+
+# Sublime Text
+*.sublime-project
+*.sublime-workspace
+
+# Vim / Emacs
+*.swp
+*.swo
+*~
+\#*\#
+.\#*
+
+# Cursor IDE
+.cursor/
+
+
+# =============================================================================
+# OPERATING SYSTEM
+# =============================================================================
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+._*
+.Spotlight-V100
+.Trashes
+
+# Windows
+Thumbs.db
+Thumbs.db:encdata
+Desktop.ini
+$RECYCLE.BIN/
+*.lnk
+
+# Linux
+*~
+
+
+# =============================================================================
+# DOCUMENTATION BUILDS
+# =============================================================================
+docs/_build/
+docs/build/
+site/
+.sphinx/
+
+
+# =============================================================================
+# DEPENDENCY LOCK FORMATS (team preference — see note in README)
+# =============================================================================
+# Uncomment to ignore lock files (not recommended for apps, fine for libraries):
+# poetry.lock
+# Pipfile.lock
+
+
+# =============================================================================
+# TEMPORARY & MISC
+# =============================================================================
+*.tmp
+*.temp
+*.bak
+*.orig
+*.pid
+*.seed
+tmp/
+temp/
+.cache/

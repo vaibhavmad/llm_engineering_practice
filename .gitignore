@@ -246,3 +246,4 @@ site/
 tmp/
 temp/
 .cache/
+.env

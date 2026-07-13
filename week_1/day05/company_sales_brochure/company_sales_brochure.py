@@ -53,7 +53,7 @@ ai_llm = OpenAI()
 # run scraper function to fetch the links
 website_to_fetch = 'https://edwarddonner.com'
 links = fetch_website_links(website_to_fetch)
-# print(links)
+print(links)
 
 
 # our scraping is working fine and we were able to extract all the links from the given website, however, some of the links are not relevant to our document, hence
@@ -113,7 +113,7 @@ Links:
     user_prompt += "\n".join(str(link) for link in links)
     return user_prompt
 
-# print(get_user_prompt('https://edwarddonner.com', "investors", 5))
+print(get_user_prompt('https://edwarddonner.com'))
 
 
 # now we have our system and user prompts ready. now using these two, we create another function, that we will use to send the response to the LLM

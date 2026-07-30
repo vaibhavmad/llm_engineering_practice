@@ -12,6 +12,7 @@ dependencies = [
     "gradio>=6.20.0",
     "ipykernel>=7.3.0",
     "ipython>=9.15.0",
+    "jupyter>=1.1.1",
     "langchain-openai>=1.4.1",
     "litellm>=1.93.0",
     "openai>=2.44.0",

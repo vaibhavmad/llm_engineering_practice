@@ -69,9 +69,41 @@ def get_price(city):
         cursor.execute("SELECT * FROM city_prices WHERE city = ?", (city.lower(), ))
         price_details = cursor.fetchone()
 
-    return f"Price for {price_details[0]} is {price_details[1]}"
+    return f"Price for {price_details[0]} is {price_details[1]}" if price_details else "Unknown city, price not known"
 
-# print(get_price('mumbai'))
+# print(get_price('kjkjkjkjk'))
 # function is working fine, output: Price for mumbai is $399, however, it should also return Unknown City, price not available, which we take up in the next session
-    
+# now the function returns for an unknown city also. So, this function is our tool. The LLM can run this to fetch price of return ticket to the destination city by passing in the destination city. We now need to create a json, so that LLM can understand when and how to use this function.
 
+get_price_function = {
+    "name": "get_price",
+    "description": "Returns the price of a return ticket to the destination city",
+    "parameters": {
+        "type": 'object',
+        "properties": {
+            "city": {
+                "type": "string",
+                "description": "destination city for which return price is needed"
+            }
+        },
+        "required": ["city"],
+        "additionalProperties": False
+    }
+}
+
+
+tools = [{"type": "function", "function": get_price_function}]
+
+# print(tools)
+# price function works fine, now we test this, if tool is being called and price is being returned by the llm or not
+
+# response = openai_client.chat.completions.create(model="gpt-4.1-mini", messages=[{"role": "system", "content": system_message}, {"role": "user", "content": "What is the price for mumbai?"}], tools=tools) #type: ignore
+
+# print(response)
+
+"""
+response:
+ChatCompletion(id='chatcmpl-ED3MrWu6K1iXQ65wmWehx3EPJdhIZ', choices=[Choice(finish_reason='tool_calls', index=0, logprobs=None, message=ChatCompletionMessage(content=None, refusal=None, role='assistant', annotations=[], audio=None, function_call=None, tool_calls=[ChatCompletionMessageFunctionToolCall(id='call_fSP2l9QCH10j8iZzbe2aeDO4', function=Function(arguments='{"city":"mumbai"}', name='get_price'), type='function')]))], created=1786779917, model='gpt-4.1-mini-2025-04-14', object='chat.completion', moderation=None, service_tier='priority', system_fingerprint='fp_b3e898ecd6', usage=CompletionUsage(completion_tokens=15, prompt_tokens=121, total_tokens=136, completion_tokens_details=CompletionTokensDetails(accepted_prediction_tokens=0, audio_tokens=0, reasoning_tokens=0, rejected_prediction_tokens=0), prompt_tokens_details=PromptTokensDetails(audio_tokens=0, cache_write_tokens=None, cached_tokens=0)))
+"""
+
+# Now we can see, that finish reason is tool_calls, function name is get_price and city is mumbai, which is as per our query. So, this is working fine till here.

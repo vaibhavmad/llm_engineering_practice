@@ -73,8 +73,150 @@ def generate_audio(message):
 
 
 # Now, our image and audio code is ready. Now, we need to move towards defining the logic for chat
-# chat must return response with pricing after running the tool, the audio for each turn or response that we received from the llm and if there's a city involved in the response and tool is being called, then the image must also be returned.
-# also, since this is not the usual chat function and we shall be creating blocks, hence, message shall be passed separately using another function to the llm input
+# we start by defining the system prompt and the get price function with json intro for LLM. This we pick up and paste from day 4
 
+system_message = "You are a helpful assistant for an airline called FlightAI. Your work is to politely respond to the users and in no more than one sentence. If you are not aware of the information being asked, please inform so to the user, do not deviate from this."
+
+def get_price(city):
+    with sqlite3.connect('flight_ai_price.db') as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT * FROM city_prices WHERE city = ?", (city.lower(), ))
+        price_details = cursor.fetchone()
+    conn.close()
+
+    return f"Price for {price_details[0]} is {price_details[1]}" if price_details else "Unknown city, price not known"
+
+get_price_function = {
+    "name": "get_price",
+    "description": "Returns the price of a return ticket to the destination city",
+    "parameters": {
+        "type": 'object',
+        "properties": {
+            "city": {
+                "type": "string",
+                "description": "destination city for which return price is needed"
+            }
+        },
+        "required": ["city"],
+        "additionalProperties": False
+    }
+}
+
+tools = [{"type": "function", "function": get_price_function}]
+
+
+# chat must return response with pricing after running the tool, the audio for each turn or response that we received from the llm and if there's a city involved in the response and tool is being called, then the image must also be returned.
+# we define each logic one by one, first of all, we simply pick up the normal chat function from the earlier build.
+
+# def chat(message, history):
+#     history = [{"role": h["role"], "content": h["content"]} for h in history]
+#     messages = [{"role": "system", "content": system_message}] + history + [{"role": "user", "content": message}]
+#     response = openai_client.chat.completions.create(model="gpt-4.1-mini", messages=messages, tools=tools) #type: ignore
+#     while response.choices[0].finish_reason == "tool_calls":
+#         llm_message = response.choices[0].message.tool_calls
+#         tool_response = handle_tool_calls(llm_message)
+#         messages.append(response.choices[0].message) #type: ignore
+#         messages.extend(tool_response)
+#         response = openai_client.chat.completions.create(model="gpt-4.1-mini", messages=messages, tools=tools) #type: ignore
+
+
+#     return response.choices[0].message.content
+
+# now, the first task is to remove message from the parameters of this function, since that will be added later
+# second, we need to return the audio also, let's store esponse.choices[0].message.content in a variable and use the audio functio to get voice output and return that also. We add handle tool call as is for now.
+
+# def handle_tool_calls(message):
+#     responses = []
+#     for tool_call in message:
+#         if tool_call.function.name == 'get_price':
+#             arguments = json.loads(tool_call.function.arguments)
+#             city_name = arguments['city']
+#             price_details = get_price(city_name)
+#             responses.append({
+#                 "role": "tool",
+#                 "content": price_details,
+#                 "tool_call_id": tool_call.id
+#             })
+
+#     return responses,city_name
+
+
+# def chat(message, history):
+#     history = [{"role": h["role"], "content": h["content"]} for h in history]
+#     messages = [{"role": "system", "content": system_message}] + history + [{"role": "user", "content": message}]
+#     response = openai_client.chat.completions.create(model="gpt-4.1-mini", messages=messages, tools=tools) #type: ignore
+#     while response.choices[0].finish_reason == "tool_calls":
+#         llm_message = response.choices[0].message.tool_calls
+#         tool_response = handle_tool_calls(llm_message)
+#         messages.append(response.choices[0].message) #type: ignore
+#         messages.extend(tool_response)
+#         response = openai_client.chat.completions.create(model="gpt-4.1-mini", messages=messages, tools=tools) #type: ignore
+
+
+#     llm_answer =  response.choices[0].message.content
+#     audio_of_answer = generate_audio(llm_answer)
+#     print(llm_answer)
+
+#     with open("test.mp3", "wb") as file:
+#         file.write(audio_of_answer)
+
+#     subprocess.run(["afplay", "test.mp3"])
+
+#     return llm_answer, audio_of_answer
+
+# we first test this
+
+# chat('hi, how are you', [])
+
+# audio works, so does the chat, now we do the following:
+# 1. remove the message part from parameters and from the messages
+# 2. To add the create city image creation logic, we first need to extract the city name, now, city name is being extracted in the handle tool calls function, and extracting this info in that is the right way, since we can have multiple tools in our code and city will be extracted only if get_price function will be called. So, we extract that info and return the value also.
+# 3. Now, since there are two values in the return, so in the chat function, after running tool_response = handle_tool_calls(llm_message), we will be getting a tuple, which will have the original tool response and also the city. Also, there can be multiple city names in case we run a multi tool call for multiple cities. So, we store the name of the cities in a list and with each iteration, we append the names. We then pass on this list to the chat function. For creating the image, we only pass ahead the first name in the list.
+# Below is the revised handle tool calls function
+
+def handle_tool_calls(message):
+    responses = []
+    cities = []
+    for tool_call in message:
+        if tool_call.function.name == 'get_price':
+            arguments = json.loads(tool_call.function.arguments)
+            city_name = arguments['city']
+            cities.append(city_name)
+            price_details = get_price(city_name)
+            responses.append({
+                "role": "tool",
+                "content": price_details,
+                "tool_call_id": tool_call.id
+            })
+
+    return responses,cities
+
+
+# Now we further work on improving the chat function:
+# 1. We start by removing the message parameter and user role list dict
+# 2. Now, handle tool calls is returning a tuple: (responses,cities), we pass on the first part to the messages and pass on the second part to the generate_image function.
+# 3. But this generate image function, must only work if there is a city name in the list. so, we use a if block to run it.
 def chat(history):
-    pass
+    history = [{"role": h["role"], "content": h["content"]} for h in history]
+    messages = [{"role": "system", "content": system_message}] + history
+    response = openai_client.chat.completions.create(model="gpt-4.1-mini", messages=messages, tools=tools) #type: ignore
+    while response.choices[0].finish_reason == "tool_calls":
+        llm_message = response.choices[0].message.tool_calls
+        tool_response = handle_tool_calls(llm_message)
+        messages.append(response.choices[0].message) #type: ignore
+        messages.extend(tool_response[0])
+        response = openai_client.chat.completions.create(model="gpt-4.1-mini", messages=messages, tools=tools) #type: ignore
+
+    city_name = tool_response[1]
+    if city_name:
+        image = generate_image(city_name[0])
+
+    llm_answer =  response.choices[0].message.content
+    audio_of_answer = generate_audio(llm_answer)
+
+    return llm_answer, audio_of_answer, image
+
+# we test this also, before going forward, but we need to use message function for that as of now, so we keep it and later remove it
+
+# chat("what is the price for paris?", [])
+# image for paris created, this works, we revert the function back to its pre test version

@@ -123,7 +123,7 @@ tools = [{"type": "function", "function": get_price_function}]
 #     return response.choices[0].message.content
 
 # now, the first task is to remove message from the parameters of this function, since that will be added later
-# second, we need to return the audio also, let's store esponse.choices[0].message.content in a variable and use the audio functio to get voice output and return that also. We add handle tool call as is for now.
+# second, we need to return the audio also, let's store response.choices[0].message.content in a variable and use the audio function to get voice output and return that also. We add handle tool call as is for now.
 
 # def handle_tool_calls(message):
 #     responses = []
@@ -181,8 +181,9 @@ def handle_tool_calls(message):
         if tool_call.function.name == 'get_price':
             arguments = json.loads(tool_call.function.arguments)
             city_name = arguments['city']
-            cities.append(city_name)
             price_details = get_price(city_name)
+            if city_name.lower() in price_details:
+                cities.append(city_name)
             responses.append({
                 "role": "tool",
                 "content": price_details,
@@ -200,23 +201,54 @@ def chat(history):
     history = [{"role": h["role"], "content": h["content"]} for h in history]
     messages = [{"role": "system", "content": system_message}] + history
     response = openai_client.chat.completions.create(model="gpt-4.1-mini", messages=messages, tools=tools) #type: ignore
+
+    image = None
+    cities = []
+
     while response.choices[0].finish_reason == "tool_calls":
         llm_message = response.choices[0].message.tool_calls
-        tool_response = handle_tool_calls(llm_message)
+        tool_response, cities = handle_tool_calls(llm_message)
         messages.append(response.choices[0].message) #type: ignore
-        messages.extend(tool_response[0])
+        messages.extend(tool_response)
         response = openai_client.chat.completions.create(model="gpt-4.1-mini", messages=messages, tools=tools) #type: ignore
 
-    city_name = tool_response[1]
-    if city_name:
-        image = generate_image(city_name[0])
+    if cities:
+        image = generate_image(cities[0])
 
     llm_answer =  response.choices[0].message.content
     audio_of_answer = generate_audio(llm_answer)
+    history += [{"role": "assistant", "content": llm_answer}]
 
-    return llm_answer, audio_of_answer, image
+    return history, audio_of_answer, image
 
 # we test this also, before going forward, but we need to use message function for that as of now, so we keep it and later remove it
 
 # chat("what is the price for paris?", [])
 # image for paris created, this works, we revert the function back to its pre test version
+
+# next up we move to the gradio blocks, we need the following blocks:
+# 1. first label for the interface
+# 2. Next up, we have the chat interface and image output sharing one row
+# 3. Then we have the audio output 
+# 4. We have the input section for text
+
+# Now, before this, since we need to create the main call back function, which will do the following:
+# 1. will take in user message
+# 2. remove this from the input and add that to the chat interface
+# 3. return, the history
+
+def main_chat_callback(message, history):
+    return "", history + [{"role": "user", "content": message}]
+
+with gr.Blocks() as ui:
+    with gr.Row():
+        chatbot = gr.Chatbot(height=500)
+        image_output = gr.Image(height=500, interactive=False)
+    with gr.Row():
+        audio_output = gr.Audio(autoplay=True)
+    with gr.Row():
+        message = gr.Textbox(label="Chat with our AI Assistant:")
+
+    message.submit(main_chat_callback, inputs=[message, chatbot], outputs=[message, chatbot]).then(chat, inputs=chatbot, outputs=[chatbot, audio_output, image_output])
+
+    ui.launch()

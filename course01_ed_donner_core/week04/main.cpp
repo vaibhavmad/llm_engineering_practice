@@ -1,105 +1,117 @@
-#include <cstdio>
-#include <cstdint>
-#include <vector>
-#include <thread>
 #include <atomic>
 #include <chrono>
-#include <arm_neon.h>
+#include <cstdio>
+#include <memory>
+#include <thread>
+#include <algorithm>
+#include <cstddef>
 
-static constexpr int64_t ITER = 200000000LL;
-static constexpr int64_t CHUNK = 16384;
-static constexpr int SLOTS = 32;
+#if defined(__aarch64__)
+#include <arm_neon.h>
+#endif
+
+namespace {
+constexpr std::size_t Iterations = 200'000'000;
+constexpr std::size_t BlockSize = 16'384;
+constexpr std::size_t Workers = 7;
+constexpr std::size_t BlockCount = (Iterations + BlockSize - 1) / BlockSize;
 
 struct alignas(128) Slot {
-    std::atomic<int64_t> ready{-1};
-    std::atomic<int64_t> freed{-1};
-    double* buf;
+    alignas(128) std::atomic<unsigned> ready{0};
+    alignas(128) double minus[BlockSize];
+    alignas(128) double plus[BlockSize];
 };
 
-static Slot slots[SLOTS];
-static std::atomic<int64_t> next_chunk{0};
-static int64_t nchunks;
-
-static inline void fill_chunk(double* __restrict buf, int64_t start, int64_t n) {
-#pragma clang fp reassociate(off) contract(off) reciprocal(off)
-    const float64x2_t one = vdupq_n_f64(1.0);
-    const float64x2_t off = {-1.0, 1.0};
-    int64_t k = 0;
-    for (; k + 4 <= n; k += 4) {
-        double b0 = 4.0 * (double)(start + k);
-        float64x2_t j0 = vaddq_f64(vdupq_n_f64(b0), off);
-        float64x2_t j1 = vaddq_f64(vdupq_n_f64(b0 + 4.0), off);
-        float64x2_t j2 = vaddq_f64(vdupq_n_f64(b0 + 8.0), off);
-        float64x2_t j3 = vaddq_f64(vdupq_n_f64(b0 + 12.0), off);
-        vst1q_f64(buf + 2 * k, vdivq_f64(one, j0));
-        vst1q_f64(buf + 2 * k + 2, vdivq_f64(one, j1));
-        vst1q_f64(buf + 2 * k + 4, vdivq_f64(one, j2));
-        vst1q_f64(buf + 2 * k + 6, vdivq_f64(one, j3));
-    }
-    for (; k < n; ++k) {
-        double b = 4.0 * (double)(start + k);
-        float64x2_t j = vaddq_f64(vdupq_n_f64(b), off);
-        vst1q_f64(buf + 2 * k, vdivq_f64(one, j));
-    }
-}
-
-static void worker() {
-    for (;;) {
-        int64_t c = next_chunk.fetch_add(1, std::memory_order_relaxed);
-        if (c >= nchunks) break;
-        Slot& s = slots[c % SLOTS];
-        while (s.freed.load(std::memory_order_acquire) < c - SLOTS) {
+inline void wait_for(const std::atomic<unsigned>& flag, unsigned value) {
+    unsigned spins = 0;
+    while (flag.load(std::memory_order_acquire) != value) {
+#if defined(__aarch64__)
+        __asm__ volatile("yield");
+#endif
+        if (++spins == 256) {
+            spins = 0;
             std::this_thread::yield();
         }
-        int64_t start = c * CHUNK + 1;
-        int64_t n = ITER - (start - 1);
-        if (n > CHUNK) n = CHUNK;
-        fill_chunk(s.buf, start, n);
-        s.ready.store(c, std::memory_order_release);
     }
 }
 
-static double sum_chunk(const double* __restrict buf, int64_t n, double result) {
-#pragma clang fp reassociate(off) contract(off) reciprocal(off)
-    for (int64_t k = 0; k < n; ++k) {
-        result -= buf[2 * k];
-        result += buf[2 * k + 1];
+void produce(Slot* slots, std::size_t worker) {
+    for (std::size_t block = worker; block < BlockCount; block += Workers) {
+        Slot& slot = slots[2 * worker + ((block / Workers) & 1)];
+        wait_for(slot.ready, 0);
+
+        const std::size_t offset = block * BlockSize;
+        const std::size_t count = std::min(BlockSize, Iterations - offset);
+        std::size_t k = 0;
+
+#if defined(__aarch64__)
+        const float64x2_t one = vdupq_n_f64(1.0);
+        const float64x2_t step = vdupq_n_f64(8.0);
+        const double first = static_cast<double>(4 * (offset + 1));
+        float64x2_t denominator = {first, first + 4.0};
+
+        for (; k + 1 < count; k += 2) {
+            vst1q_f64(slot.minus + k,
+                      vdivq_f64(one, vsubq_f64(denominator, one)));
+            vst1q_f64(slot.plus + k,
+                      vdivq_f64(one, vaddq_f64(denominator, one)));
+            denominator = vaddq_f64(denominator, step);
+        }
+#endif
+        for (; k < count; ++k) {
+            const double denominator = static_cast<double>(4 * (offset + k + 1));
+            slot.minus[k] = 1.0 / (denominator - 1.0);
+            slot.plus[k] = 1.0 / (denominator + 1.0);
+        }
+
+        slot.ready.store(1, std::memory_order_release);
+    }
+}
+
+// Preserve Python's exact order of floating-point additions and subtractions.
+__attribute__((noinline))
+double consume(double result, const Slot& slot, std::size_t count) {
+#pragma clang fp reassociate(off)
+#pragma clang fp contract(off)
+#pragma clang loop vectorize(disable)
+#pragma clang loop interleave(disable)
+    for (std::size_t k = 0; k < count; ++k) {
+        result -= slot.minus[k];
+        result += slot.plus[k];
     }
     return result;
 }
 
-int main() {
-    auto t0 = std::chrono::steady_clock::now();
+double calculate() {
+    std::unique_ptr<Slot[]> slots(new Slot[2 * Workers]);
+    std::thread threads[Workers];
 
-    nchunks = (ITER + CHUNK - 1) / CHUNK;
-    std::vector<double> storage((size_t)SLOTS * CHUNK * 2 + 16);
-    for (int i = 0; i < SLOTS; ++i) slots[i].buf = storage.data() + (size_t)i * CHUNK * 2;
-
-    unsigned hw = std::thread::hardware_concurrency();
-    int nworkers = hw > 1 ? (int)hw - 1 : 1;
-    std::vector<std::thread> threads;
-    threads.reserve(nworkers);
-    for (int i = 0; i < nworkers; ++i) threads.emplace_back(worker);
+    for (std::size_t worker = 0; worker < Workers; ++worker) {
+        threads[worker] = std::thread(produce, slots.get(), worker);
+    }
 
     double result = 1.0;
-    for (int64_t c = 0; c < nchunks; ++c) {
-        Slot& s = slots[c % SLOTS];
-        while (s.ready.load(std::memory_order_acquire) != c) {
-            /* spin */
-        }
-        int64_t start = c * CHUNK + 1;
-        int64_t n = ITER - (start - 1);
-        if (n > CHUNK) n = CHUNK;
-        result = sum_chunk(s.buf, n, result);
-        s.freed.store(c, std::memory_order_release);
+    for (std::size_t block = 0; block < BlockCount; ++block) {
+        Slot& slot = slots[2 * (block % Workers) + ((block / Workers) & 1)];
+        wait_for(slot.ready, 1);
+        result = consume(result, slot,
+                         std::min(BlockSize, Iterations - block * BlockSize));
+        slot.ready.store(0, std::memory_order_release);
     }
-    for (auto& t : threads) t.join();
 
-    result *= 4.0;
-    auto t1 = std::chrono::steady_clock::now();
-    double secs = std::chrono::duration<double>(t1 - t0).count();
+    for (auto& thread : threads) {
+        thread.join();
+    }
+    return result * 4.0;
+}
+}
 
-    std::printf("Result: %.12f\n", result);
-    std::printf("Execution Time: %.6f seconds\n", secs);
+int main() {
+    const auto start = std::chrono::steady_clock::now();
+    const double result = calculate();
+    const auto end = std::chrono::steady_clock::now();
+    const double seconds = std::chrono::duration<double>(end - start).count();
+
+    std::printf("Result: %.12f\nExecution Time: %.6f seconds\n", result, seconds);
     return 0;
 }

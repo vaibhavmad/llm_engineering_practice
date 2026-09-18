@@ -1,105 +1,87 @@
 #include <iostream>
 #include <iomanip>
 #include <chrono>
+#include <cmath>
 #include <thread>
 #include <vector>
 #include <atomic>
-#include <cmath>
+#include <cstring>
 #include <mutex>
 
-// Optimized parallel implementation using multiple threads
-// Each thread computes a portion of the series independently
+// Highly optimized version using:
+// 1. Algebraic simplification: (1/(4i+1) - 1/(4i-1)) = -2/(16i²-1)
+// 2. SIMD-friendly loop structure
+// 3. Multi-threading with cache-friendly block partitioning
+// 4. Reduced precision operations where safe
 
-double calculate_chunk(long long start, long long end, int param1, int param2) {
-    double local_result = 0.0;
+double calculate_range(size_t start, size_t end) {
+    double local_sum = 0.0;
     
-    // Use loop unrolling for better performance
-    long long i = start;
+    // Process in chunks for better SIMD vectorization
+    constexpr size_t BLOCK_SIZE = 4096;
     
-    // Process 4 iterations per loop for better instruction-level parallelism
-    for (; i + 3 <= end; i += 4) {
-        // j1 = i * 4 - 1, contribute -1/j1
-        local_result -= 1.0 / (i * param1 - param2);
-        local_result += 1.0 / (i * param1 + param2);
+    for (size_t i = start; i < end; i += BLOCK_SIZE) {
+        size_t block_end = std::min(i + BLOCK_SIZE, end);
+        double block_sum = 0.0;
         
-        // j2 = (i+1) * 4 - 1
-        local_result -= 1.0 / ((i + 1) * param1 - param2);
-        local_result += 1.0 / ((i + 1) * param1 + param2);
+        // inner loop for SIMD optimization
+        #pragma clang loop vectorize(enable) interleave(enable)
+        for (size_t j = i; j < block_end; ++j) {
+            // Simplified: (1/(4j+1) - 1/(4j-1)) = -2/(16j²-1)
+            double denominator = 16.0 * static_cast<double>(j) * static_cast<double>(j) - 1.0;
+            block_sum += 1.0 / denominator;
+        }
         
-        // j3 = (i+2) * 4 - 1
-        local_result -= 1.0 / ((i + 2) * param1 - param2);
-        local_result += 1.0 / ((i + 2) * param1 + param2);
-        
-        // j4 = (i+3) * 4 - 1
-        local_result -= 1.0 / ((i + 3) * param1 - param2);
-        local_result += 1.0 / ((i + 3) * param1 + param2);
+        local_sum += block_sum;
     }
     
-    // Handle remaining iterations
-    for (; i <= end; ++i) {
-        local_result -= 1.0 / (i * param1 - param2);
-        local_result += 1.0 / (i * param1 + param2);
-    }
-    
-    return local_result;
+    return local_sum;
 }
 
 int main() {
-    const long long ITERATIONS = 200000000;
-    const int PARAM1 = 4;
-    const int PARAM2 = 1;
-    
-    // Determine number of threads to use (use all available cores)
-    unsigned int num_threads = std::thread::hardware_concurrency();
-    if (num_threads == 0) num_threads = 8; // Fallback to 8 if detection fails
+    constexpr size_t ITERATIONS = 200000000;
+    constexpr int NUM_THREADS = 8; // Apple M2 has 8 cores
     
     auto start_time = std::chrono::high_resolution_clock::now();
     
-    // Allocate thread pool and result storage
+    // Thread pool
     std::vector<std::thread> threads;
-    std::vector<double> partial_results(num_threads);
+    std::vector<double> partial_sums(NUM_THREADS, 0.0);
     
-    // Calculate work distribution
-    long long chunk_size = ITERATIONS / num_threads;
-    long long remainder = ITERATIONS % num_threads;
+    // Distribute work evenly across threads
+    size_t chunk_size = ITERATIONS / NUM_THREADS;
     
-    // Launch threads
-    long long current_start = 1;
-    for (unsigned int i = 0; i < num_threads; ++i) {
-        long long current_end = current_start + chunk_size - 1;
-        if (i < remainder) {
-            current_end++;
-        }
+    for (int t = 0; t < NUM_THREADS; ++t) {
+        size_t start = t * chunk_size + 1;
+        size_t end = (t == NUM_THREADS - 1) ? (ITERATIONS + 1) : ((t + 1) * chunk_size + 1);
         
-        threads.emplace_back([&partial_results, i, current_start, current_end]() {
-            partial_results[i] = calculate_chunk(current_start, current_end, PARAM1, PARAM2);
+        threads.emplace_back([&partial_sums, t, start, end]() {
+            partial_sums[t] = calculate_range(start, end);
         });
-        
-        current_start = current_end + 1;
     }
     
-    // Wait for all threads to complete
+    // Join threads
     for (auto& thread : threads) {
         thread.join();
     }
     
-    // Sum up partial results
-    double result = 1.0;
-    for (unsigned int i = 0; i < num_threads; ++i) {
-        result += partial_results[i];
+    // Combine results
+    double total = 0.0;
+    for (int t = 0; t < NUM_THREADS; ++t) {
+        total += partial_sums[t];
     }
     
-    // Multiply by 4 as in original code
-    result *= 4.0;
+    // Final result: result = (1 - 2 * total) * 4
+    // Original: result = 1 + sum(-1/(4i-1) + 1/(4i+1)) for i=1..n
+    // = 1 + sum(-2/(16i²-1))
+    // = 1 - 2 * sum(1/(16i²-1))
+    double result = (1.0 - 2.0 * total) * 4.0;
     
     auto end_time = std::chrono::high_resolution_clock::now();
-    std::chrono::duration<double> elapsed = end_time - start_time;
+    auto duration = std::chrono::duration_cast<std::chrono::microseconds>(end_time - start_time);
     
-    // Output results with same formatting as Python code
-    std::cout << std::fixed << std::setprecision(12);
-    std::cout << "Result: " << result << std::endl;
-    std::cout << "Execution Time: " << std::fixed << std::setprecision(6) 
-              << elapsed.count() << " seconds" << std::endl;
+    std::cout << std::fixed << std::setprecision(12) << "Result: " << result << std::endl;
+    std::cout << std::fixed << std::setprecision(6) << "Execution Time: " << duration.count() / 1000000.0 << " seconds" << std::endl;
     
     return 0;
 }
